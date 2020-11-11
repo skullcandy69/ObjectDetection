@@ -1,171 +1,213 @@
 import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:tflite/tflite.dart';
 import 'package:image_picker/image_picker.dart';
 
-void main() {
-  runApp(MyApp());
-}
+void main() => runApp(MaterialApp(
+  home: DetectMain(),
+  debugShowCheckedModeBanner: false,
+));
 
-const String ssd = "SSD MobileNet";
-
-class MyApp extends StatelessWidget {
+class DetectMain extends StatefulWidget {
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      home: TfliteHome(),
-    );
-  }
+  _DetectMainState createState() => new _DetectMainState();
 }
 
-class TfliteHome extends StatefulWidget {
-  @override
-  _TfliteHomeState createState() => _TfliteHomeState();
-}
+class _DetectMainState extends State<DetectMain> {
 
-class _TfliteHomeState extends State<TfliteHome> {
   File _image;
-
   double _imageWidth;
   double _imageHeight;
-  bool _busy = false;
-
-  List _recognitions;
-
-  @override
-  void initState() {
-    super.initState();
-    _busy = true;
-
-    loadModel().then((val) {
-      setState(() {
-        _busy = false;
-      });
-    });
-  }
+  var _recognitions;
 
   loadModel() async {
     Tflite.close();
     try {
-      await Tflite.loadModel(
-          model: "assets/tflite/ssd_mobilenet.tflite",
-          labels: "assets/tflite/ssd_mobilenet.txt",
-        );
+      String res;
+      res = await Tflite.loadModel(
+        model: "assets/tflite/ssd_mobilenet.tflite",
+        labels: "assets/tflite/ssd_mobilenet.txt",
+      );
+      print(res);
     } on PlatformException {
       print("Failed to load the model");
     }
   }
 
-  selectFromImagePicker() async {
-    var image = await ImagePicker.pickImage(source: ImageSource.gallery);
-    if (image == null) return;
-    setState(() {
-      _busy = true;
-    });
-    predictImage(image);
-  }
+  // run prediction using TFLite on given image
+  Future predict(File image) async {
 
-  predictImage(File image) async {
-    if (image == null) return;
-      await ssdMobileNet(image);
+    var recognitions = await Tflite.runModelOnImage(
+        path: image.path,   // required
+        imageMean: 0.0,   // defaults to 117.0
+        imageStd: 255.0,  // defaults to 1.0
+        numResults: 2,    // defaults to 5
+        threshold: 0.2,   // defaults to 0.1
+        asynch: true      // defaults to true
+    );
 
-    FileImage(image)
-        .resolve(ImageConfiguration())
-        .addListener((ImageStreamListener((ImageInfo info, bool _) {
-          setState(() {
-            _imageWidth = info.image.width.toDouble();
-            _imageHeight = info.image.height.toDouble();
-          });
-        })));
-
-    setState(() {
-      _image = image;
-      _busy = false;
-    });
-  }
-
-
-  ssdMobileNet(File image) async {
-    var recognitions = await Tflite.detectObjectOnImage(
-        path: image.path, numResultsPerClass: 1);
+    print(recognitions);
 
     setState(() {
       _recognitions = recognitions;
     });
+
   }
 
-  List<Widget> renderBoxes(Size screen) {
-    if (_recognitions == null) return [];
-    if (_imageWidth == null || _imageHeight == null) return [];
+  // send image to predict method selected from gallery or camera
+  sendImage(File image) async {
+    if(image == null) return;
+    await predict(image);
 
-    double factorX = screen.width;
-    double factorY = _imageHeight / _imageHeight * screen.width;
+    // get the width and height of selected image
+    FileImage(image).resolve(ImageConfiguration()).addListener((ImageStreamListener((ImageInfo info, bool _){
+      setState(() {
+        _imageWidth = info.image.width.toDouble();
+        _imageHeight = info.image.height.toDouble();
+        _image = image;
+      });
+    })));
+  }
 
-    Color blue = Colors.red;
+  // select image from gallery
+  selectFromGallery() async {
+    var image = await ImagePicker.pickImage(source: ImageSource.gallery);
+    if(image == null) return;
+    setState(() {
 
-    return _recognitions.map((re) {
-      return Positioned(
-        left: re["rect"]["x"] * factorX,
-        top: re["rect"]["y"] * factorY,
-        width: re["rect"]["w"] * factorX,
-        height: re["rect"]["h"] * factorY,
-        child: ((re["confidenceInClass"] > 0.50))? Container(
-          decoration: BoxDecoration(
-              border: Border.all(
-            color: blue,
-            width: 3,
-          )),
-          child: Text(
-            "${re["detectedClass"]} ${(re["confidenceInClass"] * 100).toStringAsFixed(0)}%",
-            style: TextStyle(
-              background: Paint()..color = blue,
-              color: Colors.white,
-              fontSize: 15,
-            ),
-          ),
-        ) : Container()
-     );
-    }).toList();
+    });
+    sendImage(image);
+  }
+
+  // select image from camera
+  selectFromCamera() async {
+    var image = await ImagePicker.pickImage(source: ImageSource.camera);
+    if(image == null) return;
+    setState(() {
+
+    });
+    sendImage(image);
   }
 
   @override
+  void initState() {
+    super.initState();
+
+    loadModel().then((val) {
+      setState(() {});
+    });
+  }
+
+
+  Widget printValue(rcg) {
+    if (rcg == null) {
+      return Text('', style: TextStyle(fontSize: 30, fontWeight: FontWeight.w700));
+    }else if(rcg.isEmpty){
+      return Center(
+        child: Text("Could not recognize", style: TextStyle(fontSize: 25, fontWeight: FontWeight.w700)),
+      );
+    }
+    return Padding(
+      padding: EdgeInsets.fromLTRB(0,0,0,0),
+      child: Center(
+        child: Text(
+          "Prediction: "+_recognitions[0]['label'].toString().toUpperCase(),
+          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+        ),
+      ),
+    );
+  }
+
+  // gets called every time the widget need to re-render or build
+  @override
   Widget build(BuildContext context) {
+
+    // get the width and height of current screen the app is running on
     Size size = MediaQuery.of(context).size;
 
-    List<Widget> stackChildren = [];
+    // initialize two variables that will represent final width and height of the segmentation
+    // and image preview on screen
+    double finalW;
+    double finalH;
 
-    stackChildren.add(Positioned(
-      top: 0.0,
-      left: 0.0,
-      width: size.width,
-      child: _image == null ? Text("No Image Selected") : Image.file(_image),
-    ));
+    // when the app is first launch usually image width and height will be null
+    // therefore for default value screen width and height is given
+    if(_imageWidth == null && _imageHeight == null) {
+      finalW = size.width;
+      finalH = size.height;
+    }else {
 
-    stackChildren.addAll(renderBoxes(size));
+      // ratio width and ratio height will given ratio to
+//      // scale up or down the preview image
+      double ratioW = size.width / _imageWidth;
+      double ratioH = size.height / _imageHeight;
 
-    if (_busy) {
-      stackChildren.add(Center(
-        child: CircularProgressIndicator(),
-      ));
+      // final width and height after the ratio scaling is applied
+      finalW = _imageWidth * ratioW*.85;
+      finalH = _imageHeight * ratioH*.50;
     }
 
+//    List<Widget> stackChildren = [];
+
+
     return Scaffold(
-      appBar: AppBar(
-        title: Text("Object detetction"),
-        backgroundColor: Colors.red,
-      ),
-      floatingActionButton: FloatingActionButton(
-        child: Icon(Icons.image),
-        backgroundColor: Colors.red,
-        tooltip: "Pick Image from gallery",
-        onPressed: selectFromImagePicker,
-      ),
-      body: Stack(
-        children: stackChildren,
-      ),
+        appBar: AppBar(
+          iconTheme: IconThemeData(
+            color: Colors.black, //change your color here
+          ),
+          title: Text("Flutter x TF-Lite", style: TextStyle(color: Colors.white),),
+          backgroundColor: Colors.teal,
+          centerTitle: true,
+        ),
+        body: ListView(
+          children: <Widget>[
+            Padding(
+              padding: EdgeInsets.fromLTRB(0,30,0,30),
+              child: printValue(_recognitions),
+            ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(0,0,0,10),
+              child: _image == null ? Center(child: Text("Select image from camera or gallery"),): Center(child: Image.file(_image, fit: BoxFit.fill, width: finalW, height: finalH)),
+            ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: <Widget>[
+                Padding(
+                  padding: EdgeInsets.fromLTRB(0, 0, 20, 0),
+                  child: Container(
+                    height: 50,
+                    width: 150,
+                    color: Colors.redAccent,
+                    child: FlatButton.icon(
+                      onPressed: selectFromCamera,
+                      icon: Icon(Icons.camera_alt, color: Colors.white, size: 30,),
+                      color: Colors.deepPurple,
+                      label: Text(
+                        "Camera",style: TextStyle(color: Colors.white, fontSize: 20),
+                      ),
+                    ),
+                    margin: EdgeInsets.fromLTRB(0, 20, 0, 10),
+                  ),
+                ),
+                Container(
+                  height: 50,
+                  width: 150,
+                  color: Colors.tealAccent,
+                  child: FlatButton.icon(
+                    onPressed: selectFromGallery,
+                    icon: Icon(Icons.file_upload, color: Colors.white, size: 30,),
+                    color: Colors.blueAccent,
+                    label: Text(
+                      "Gallery",style: TextStyle(color: Colors.white, fontSize: 20),
+                    ),
+                  ),
+                  margin: EdgeInsets.fromLTRB(0, 20, 0, 10),
+                ),
+              ],
+            ),
+          ],
+        )
     );
   }
 }
